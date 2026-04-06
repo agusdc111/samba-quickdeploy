@@ -20,6 +20,7 @@
 - [🩺 Troubleshooting](#-troubleshooting)
 - [🧭 Opcional: Webmin & Descubrimiento en Red](#-opcional-webmin--descubrimiento-en-red)
 - [🧽 Mantenimiento](#-mantenimiento)
+- [🗑️ Desinstalación completa](#️-desinstalación-completa)
 - [❓FAQ](#faq)
 - [📄 Licencia](#-licencia)
 
@@ -45,6 +46,7 @@ install-samba.sh                # Instalador interactivo (core)
    ├── samba-del-user.sh        # Eliminar usuarios (con reconfirmación)
    ├── samba-list-users.sh      # Listar cuentas Samba + rol + estado
    └── samba-active-users.sh    # Ver sesiones activas (user/IP/share/tiempo)
+uninstall-samba.sh              # Rollback completo (desinstala todo)
 ```
 
 ---
@@ -217,6 +219,28 @@ sudo smbclient //localhost/SHARE -U usuario -m SMB3 -c 'ls'   # prueba local
   `sudo samba-del-user.sh <usuario>`
 - **Sesiones activas** (para ver quién está conectado):  
   `sudo samba-active-users.sh`
+
+---
+
+## 🗑️ Desinstalación completa
+
+Para hacer un rollback total de todo lo que instaló `install-samba.sh` (Samba, paquetes, scripts, grupos, datos):
+
+```bash
+sudo bash uninstall-samba.sh
+```
+
+El script pedirá que escribas `CONFIRMAR` antes de hacer cualquier cosa destructiva. Luego:
+1. Detiene y deshabilita servicios (`smbd`, `nmbd`, `winbind`, `wsdd`, `wsdd2`)
+2. Elimina todas las cuentas Samba (`pdbedit -x`)
+3. Desinstala paquetes con `apt purge`
+4. Elimina directorios de Samba (`/etc/samba`, `/var/lib/samba`, `/var/log/samba`, etc.)
+5. Elimina los scripts de gestión de `/usr/local/sbin/`
+6. Elimina los grupos `sambadmins` y `sambusers`
+7. Pregunta si eliminar `/srv/samba` (la carpeta compartida)
+8. Pregunta si eliminar usuarios Linux creados durante la instalación
+
+Al finalizar, el sistema queda limpio y listo para volver a correr `install-samba.sh` de cero.
 
 ---
 
