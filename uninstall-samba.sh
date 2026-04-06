@@ -8,6 +8,7 @@ set -euo pipefail
 RED(){ printf "\e[31m%s\e[0m\n" "$*"; }
 YEL(){ printf "\e[33m%s\e[0m\n" "$*"; }
 GRN(){ printf "\e[32m%s\e[0m\n" "$*"; }
+is_yes(){ [[ "${1,,}" =~ ^(s|si|sí|y|yes)$ ]]; }
 
 [[ $EUID -eq 0 ]] || { RED "Ejecutá como root (sudo)."; exit 1; }
 
@@ -33,11 +34,11 @@ done
 # ---------- 2. Eliminar usuarios Samba ----------
 GRN "[2/8] Eliminando usuarios Samba..."
 if command -v pdbedit >/dev/null 2>&1; then
-  SAMBA_USERS=$(pdbedit -L 2>/dev/null | cut -d: -f1 || true)
-  for U in $SAMBA_USERS; do
+  while IFS= read -r U; do
+    [[ -z "$U" ]] && continue
     smbpasswd -d "$U" 2>/dev/null || true
     pdbedit -x -u "$U" 2>/dev/null && YEL "  Cuenta Samba eliminada: $U" || true
-  done
+  done < <(pdbedit -L 2>/dev/null | cut -d: -f1 || true)
 fi
 
 # ---------- 3. Desinstalar paquetes ----------
@@ -71,7 +72,7 @@ groupdel sambusers  2>/dev/null && YEL "  Grupo sambusers eliminado."  || true
 GRN "[7/8] Carpeta compartida..."
 echo
 read -r -p "¿Eliminar también la carpeta compartida /srv/samba? [s/N]: " DEL_SHARE
-if [[ "${DEL_SHARE,,}" =~ ^(s|si|sí|y|yes)$ ]]; then
+if is_yes "${DEL_SHARE}"; then
   rm -rf /srv/samba && GRN "  /srv/samba eliminado." || true
 else
   YEL "  /srv/samba conservado."
@@ -81,12 +82,12 @@ fi
 GRN "[8/8] Usuarios Linux..."
 echo
 read -r -p "¿Querés eliminar usuarios Linux que hayas creado con el instalador? [s/N]: " DEL_USERS
-if [[ "${DEL_USERS,,}" =~ ^(s|si|sí|y|yes)$ ]]; then
+if is_yes "${DEL_USERS}"; then
   read -r -p "Ingresá los nombres separados por espacio (ej: agusadmin maria): " -a USER_LIST
   for U in "${USER_LIST[@]}"; do
     if id -u "$U" >/dev/null 2>&1; then
       read -r -p "  ¿Eliminar HOME de '$U' también? [s/N]: " DEL_HOME
-      if [[ "${DEL_HOME,,}" =~ ^(s|si|sí|y|yes)$ ]]; then
+      if is_yes "${DEL_HOME}"; then
         userdel -r "$U" 2>/dev/null && YEL "  Usuario '$U' y HOME eliminados." || true
       else
         userdel "$U" 2>/dev/null && YEL "  Usuario '$U' eliminado (HOME conservado)." || true
