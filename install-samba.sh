@@ -61,6 +61,9 @@ setfacl -R  -m g:sambusers:rwx "$SHARE_PATH" || true
 setfacl -R  -d -m g:sambusers:rwx "$SHARE_PATH" || true
 
 # ---------- smb.conf ----------
+# Asegurar que el directorio existe (puede faltar tras un apt purge)
+mkdir -p /etc/samba
+
 timestamp="$(date +%F_%H%M%S)"
 if [[ -f /etc/samba/smb.conf ]]; then
   cp -a /etc/samba/smb.conf "/etc/samba/smb.conf.bak.$timestamp"
@@ -131,6 +134,13 @@ cat > /etc/samba/smb.conf <<EOF
 
     inherit permissions = no
 EOF
+
+# Crear directorios de runtime necesarios (pueden faltar tras apt purge)
+mkdir -p /run/samba
+mkdir -p /var/lib/samba/private
+chmod 700 /var/lib/samba/private
+mkdir -p /var/cache/samba
+mkdir -p /var/log/samba
 
 # Validación y arranque
 testparm -s || die "testparm detectó errores en smb.conf."
