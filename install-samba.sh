@@ -15,6 +15,7 @@ RED(){ printf "\e[31m%s\e[0m\n" "$*"; }
 YEL(){ printf "\e[33m%s\e[0m\n" "$*"; }
 GRN(){ printf "\e[32m%s\e[0m\n" "$*"; }
 die(){ RED "ERROR: $*"; exit 1; }
+trap 'RED "El script falló en la línea $LINENO. Comando: $BASH_COMMAND"; exit 1' ERR
 
 [[ $EUID -eq 0 ]] || die "Ejecutá como root (sudo)."
 
@@ -40,7 +41,7 @@ ask_yes_no () { # $1=prompt  -> returns 0 (yes) / 1 (no)
 GRN "Instalando paquetes base..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y samba samba-common-bin acl smbclient curl gnupg || die "No pude instalar Samba/ACL."
+apt-get install -y samba samba-common-bin acl smbclient curl gnupg gawk || die "No pude instalar Samba/ACL."
 
 # ---------- Grupos de roles ----------
 getent group sambadmins >/dev/null || { groupadd sambadmins; GRN "Grupo sambadmins creado."; }
@@ -383,7 +384,7 @@ trap 'rm -f "$TMP1" "$TMP2"' EXIT
 smbstatus      >"$TMP1" 2>/dev/null || true
 smbstatus -S   >"$TMP2" 2>/dev/null || true
 
-awk -v NOW="$(date +%s)" -v T1="$TMP1" -v T2="$TMP2" '
+gawk -v NOW="$(date +%s)" -v T1="$TMP1" -v T2="$TMP2" '
   function trim(s){ sub(/^[ \t\r\n]+/,"",s); sub(/[ \t\r\n]+$/,"",s); return s }
   function get_ip(s,   m){ if (match(s, /([0-9]{1,3}\.){3}[0-9]{1,3}/, m)) return m[0]; return "?" }
   function human_age(sec,   d,h,m){ if (sec<0) sec=0; d=int(sec/86400); sec%=86400; h=int(sec/3600); sec%=3600; m=int(sec/60);
@@ -449,49 +450,76 @@ chmod +x /usr/local/sbin/samba-active-users.sh
 
 # ---------- Usuarios iniciales (opcionales) ----------
 if ask_yes_no "¿Crear ahora un usuario ADMIN (lectura/escritura)?"; then
-  read -r -p "Nombre de usuario admin: " UADMIN
-  read -r -s -p "Contraseña: " PADMIN; echo
-  /usr/local/sbin/samba-user.sh "$UADMIN" "$PADMIN" admin
+  (
+    set +e
+    read -r -p "Nombre de usuario admin: " UADMIN
+    read -r -s -p "Contraseña: " PADMIN; echo
+    /usr/local/sbin/samba-user.sh "$UADMIN" "$PADMIN" admin
+  ) || YEL "Advertencia: la creación del usuario admin falló o se omitió. Continuando instalación..."
 fi
 
 if ask_yes_no "¿Crear ahora un usuario BÁSICO (solo lectura)?"; then
-  read -r -p "Nombre de usuario básico: " UUSER
-  read -r -s -p "Contraseña: " PUSER; echo
-  /usr/local/sbin/samba-user.sh "$UUSER" "$PUSER" user
+  (
+    set +e
+    read -r -p "Nombre de usuario básico: " UUSER
+    read -r -s -p "Contraseña: " PUSER; echo
+    /usr/local/sbin/samba-user.sh "$UUSER" "$PUSER" user
+  ) || YEL "Advertencia: la creación del usuario básico falló o se omitió. Continuando instalación..."
 fi
 
 # ---------- WS-Discovery (opcional) ----------
 if ask_yes_no "¿Instalar wsdd para que Windows te vea en la pestaña 'Red'?"; then
-  apt-get install -y wsdd
-  systemctl enable --now wsdd
-  GRN "wsdd instalado y ejecutándose."
+  (
+    set +e
+    apt-get install -y wsdd || { YEL "No se pudo instalar wsdd. Continuando..."; }
+    WSDD_SVC=""
+    for _svc in wsdd wsdd2; do
+      if systemctl list-unit-files 2>/dev/null | grep -q "^${_svc}\.service"; then
+        WSDD_SVC="$_svc"; break
+      fi
+    done
+    if [[ -n "$WSDD_SVC" ]]; then
+      systemctl enable --now "$WSDD_SVC" && GRN "wsdd instalado y ejecutándose ($WSDD_SVC)." || YEL "wsdd instalado pero no se pudo iniciar el servicio."
+    else
+      YEL "wsdd instalado, pero no se encontró unit systemd. Puede que requiera reinicio o configuración manual."
+    fi
+  ) || YEL "Advertencia: wsdd falló o se omitió. Continuando instalación..."
 fi
 
 # ---------- Webmin (opcional) ----------
 if ask_yes_no "¿Instalar Webmin para administrar por web?"; then
-  curl -fsSL https://raw.githubusercontent.com/webmin/webmin/master/webmin-setup-repo.sh -o /tmp/webmin-setup-repo.sh
-  sh /tmp/webmin-setup-repo.sh
-  apt-get update -y
-  apt-get install -y --install-recommends webmin
-  systemctl status webmin --no-pager || true
-  GRN "Webmin instalado. Acceso: https://IP_DEL_SERVIDOR:10000 (certificado autofirmado)."
+  (
+    set +e
+    curl -fsSL https://raw.githubusercontent.com/webmin/webmin/master/webmin-setup-repo.sh -o /tmp/webmin-setup-repo.sh
+    sh /tmp/webmin-setup-repo.sh
+    apt-get update -y
+    apt-get install -y --install-recommends webmin
+    systemctl status webmin --no-pager || true
+    GRN "Webmin instalado. Acceso: https://IP_DEL_SERVIDOR:10000 (certificado autofirmado)."
+  ) || YEL "Advertencia: Webmin falló o se omitió. Continuando instalación..."
 fi
 
 # ---------- UFW (opcional) ----------
 if ask_yes_no "¿Configurar UFW (firewall) para SMB?"; then
-  apt-get install -y ufw
-  ufw allow OpenSSH
-  if ask_yes_no "¿Permitir SMB SOLO desde una IP origen?"; then
-    read -r -p "IP de origen permitida (ej. 1.2.3.4): " SRCIP
-    [[ -n "$SRCIP" ]] || die "IP inválida."
-    ufw allow from "$SRCIP" to any port 445 proto tcp
-    ufw allow from "$SRCIP" to any port 139 proto tcp
-  else
-    ufw allow 445/tcp
-    ufw allow 139/tcp
-  fi
-  ufw --force enable
-  ufw status verbose
+  (
+    set +e
+    apt-get install -y ufw
+    ufw allow OpenSSH
+    if ask_yes_no "¿Permitir SMB SOLO desde una IP origen?"; then
+      read -r -p "IP de origen permitida (ej. 1.2.3.4): " SRCIP
+      if [[ -n "$SRCIP" ]]; then
+        ufw allow from "$SRCIP" to any port 445 proto tcp
+        ufw allow from "$SRCIP" to any port 139 proto tcp
+      else
+        YEL "IP inválida. Omitiendo reglas SMB por IP."
+      fi
+    else
+      ufw allow 445/tcp
+      ufw allow 139/tcp
+    fi
+    ufw --force enable
+    ufw status verbose
+  ) || YEL "Advertencia: UFW falló o se omitió. Continuando instalación..."
 fi
 
 # ---------- Info final ----------
